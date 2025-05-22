@@ -1,0 +1,81 @@
+# 编译输出文件
+bin/
+build/
+build_debug/
+cmake-build-debug/
+cmake-build-release/
+Debug/
+Release/
+*.out
+*.app
+
+# 自动生成的文件和文件夹
+.vscode/
+.idea/
+.cproject
+.project
+.cmake/
+.history/
+.clangd
+CMakeFiles/
+CMakeScripts/
+Makefile
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Testing/
+html/
+cmake-build-debug
+
+# 编译工具生成的文件
+*.o
+*.obj
+
+# 依赖管理器目录
+vendor/
+
+# 日志文件
+*.log
+
+# macOS文件
+.DS_Store
+
+# 编辑器临时文件
+*~
+*.swp
+*.swo
+*.swn
+
+# Visual Studio项目文件
+*.suo
+*.user
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sdf
+*.opensdf
+
+# Xcode项目文件
+*.xcodeproj
+project.xcworkspace/
+xcuserdata/
+
+# Eclipse项目文件
+.metadata/
+
+# Sublime Text项目文件
+.sublime-project
+.sublime-workspace
+
+# Qt Creator项目文件
+*.pro.user
+
+# 缓存和日志文件
+.cache/
+logs/
+
+# 第三方库
+ext/
+
+core.*
