@@ -90,25 +90,65 @@ PipelineResultType Pipeline::execute_pipeline()
 				//                      3. FINISHED: 结束处理
 				//                      4. BLOCKED: 阻塞，同Source，暂无使用
 				// TODO: 这里需要补充代码
-
+                operator_result = operators[i]->execute_operator(execute_context);
+                switch (operator_result) {
+                    case OperatorResultType::HAVE_MORE_OUTPUT:
+                        if (source_result == SourceResultType::FINISHED) {
+                            result = PipelineResultType::FINISHED;
+                        } else {
+                            result = PipelineResultType::HAVE_MORE_OUTPUT;
+                        }
+                        break;
+                    case OperatorResultType::NO_MORE_OUTPUT:
+                        if (source_result == SourceResultType::FINISHED) {
+                            result = PipelineResultType::FINISHED;
+                        } else {
+                            result = PipelineResultType::NO_MORE_OUTPUT;
+                        }
+                        break;
+                    case OperatorResultType::FINISHED:
+                        result = PipelineResultType::FINISHED;
+                        break;
+                    case OperatorResultType::BLOCKED:
+                        result = PipelineResultType::BLOCKED;
+                        break;
+                }
 				// Step 5.6: 根据Operator的状态可以提前中止后续的计算，如果状态为NO_MORE_OUTPUT，后续算子其实没必要再次执行
 				// TODO: 这里需要补充代码
-
+                if (operator_result == OperatorResultType::NO_MORE_OUTPUT) {
+                    break;
+                }
             } // for
         }     // operators
 		// Step 5.7: 如果Source结束，Operator为NO_MORE_OUTPUT，说明已经没有数据，结束循环。Push模型必然会多处理一个空数据块，然后才知道结束数据处理。
 		// TODO: 这里需要补充代码
-
+        if (operator_result == OperatorResultType::NO_MORE_OUTPUT && source_result != SourceResultType::FINISHED) {
+            continue;
+        }
 		// Step 5.8: 执行Sink算子，Pipeline可以没有Sink，因此要先判断Sink是否存在
         if(sink) {
 			// Step 5.9: 调用Sink相关函数
 			// TODO: 这里需要补充代码
-
+            sink_result = sink->sink(execute_context, *output);
 			// Step 5.10: 同样Sink的执行也对应3种状态：1. NEED_MORE_INPUT：正常执行；
 			//                                    2. FINISHED: 正常结束；
 			//									  3. BLOCKED: 阻塞，同Source，暂无使用
 			// TODO: 这里需要补充代码
-
+            switch (sink_result) {
+                case SinkResultType::NEED_MORE_INPUT:
+                    if (source_result == SourceResultType::FINISHED) {
+                            result = PipelineResultType::FINISHED;
+                        } else {
+                            result = PipelineResultType::NEED_MORE_INPUT;
+                        }
+                        break;
+                case SinkResultType::FINISHED:
+                    result = PipelineResultType::FINISHED;
+                    break;
+                case SinkResultType::BLOCKED:
+                    result = PipelineResultType::BLOCKED;
+                    break;
+            }
         }
 		// Step 5.11: 判断Pipeline是否结束
         if (result == PipelineResultType::FINISHED)

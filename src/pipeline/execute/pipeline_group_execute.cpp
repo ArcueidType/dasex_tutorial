@@ -23,10 +23,14 @@ namespace DaseX {
 void PipelineGroupExecute::traverse_plan() {
 	// Step 1: 使用栈来保存遍历PipelineGroup树的结果，在每次遍历前清空上一次的结果
 	// TODO: 这里需要补充代码
-
+    while (!this->pipe_stack.empty())
+    {
+        this->pipe_stack.pop();
+    }
+    
 	// Step 2： 使用 DFS 遍历整个计划并将结果保存在 pipe_stack 中
 	// TODO: 这里需要补充代码
-
+    plan_dfs(this->plan, 0);
 }
 
 void PipelineGroupExecute::plan_dfs(std::shared_ptr<PipelineGroup> root, int group_id) {
@@ -35,10 +39,13 @@ void PipelineGroupExecute::plan_dfs(std::shared_ptr<PipelineGroup> root, int gro
 	root->group_id = group_id;
 	// Step 2: 将当前节点保存至 pipe_stack 中，同时递增group_id
 	// TODO: 这里需要补充代码
-
+    this->pipe_stack.push(root);
+    group_id++;
 	// Step 3: 递归访问子节点
 	// TODO: 这里需要补充代码
-
+    for (auto &dependency : root->dependencies) {
+        plan_dfs(dependency, group_id);
+    }
 }
 
 void PipelineGroupExecute::execute() {
