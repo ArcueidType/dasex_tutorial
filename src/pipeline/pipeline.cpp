@@ -264,13 +264,19 @@ void Pipeline::Initialize(int pipe_idx, int work_id) {
             {
 				// Step 7.1: 获取当前Pipeline的Sink，并构建对应的状态
 				// TODO: 这里需要补充代码
-
+                output = this->sink->GetLocalSinkState();
+                auto &output_p = (*output).Cast<AggLocalSinkState>();
 				// Step 7.2: 初始化Sink算子的状态信息
 				// TODO: 这里需要补充代码
-
+                int partition_nums = 0;
+                if (auto pipe_group = this->pipelines.lock()) {
+                    partition_nums = pipe_group->parallelism;
+                }
+                output_p.partition_nums = partition_nums;
+                output_p.partitioned_hash_tables.resize(partition_nums);
 				// Step 7.3: 将输出结果记录到Sink中，在子Pipeline中作为Source使用
 				// TODO: 这里需要补充代码
-
+                sink->lsink_state = output;
                 break;
             }
             case PhysicalOperatorType::MULTI_FIELD_HASH_GROUP_BY:
@@ -304,19 +310,28 @@ std::shared_ptr<Pipeline> Pipeline::Copy(int work_id) {
 	std::shared_ptr<ExecuteContext> new_execute_context = std::make_shared<ExecuteContext>();
 	// Step 2: 复制Pipeline所属PipelineGroup
 	// TODO: 这里需要补充代码
-
+    new_pipeline->pipelines = this->pipelines;
 	// Step 3: 复制Pipeline的Source（调用对应的Operator::Copy()方法，无需同学们实现，下面同理）
 	// TODO: 这里需要补充代码
-
+    new_pipeline->source = this->source->Copy(work_id);
 	// Step 4: 复制Pipeline的Operator
 	// TODO: 这里需要补充代码
-
+    for (auto &op : this->operators) {
+        new_pipeline->operators.emplace_back(op->Copy(work_id));
+    }
 	// Step 5: 复制Pipeline的Sink
 	// TODO: 这里需要补充代码
-
+    if (this->sink) {
+        new_pipeline->sink = this->sink->Copy(work_id);
+    } else {
+        new_pipeline->sink = nullptr;
+    }
 	// Step 6: 复制其它执行信息
 	// TODO: 这里需要补充代码
-
+    new_pipeline->work_id = work_id;
+    new_pipeline->is_final_chunk = this->is_final_chunk;
+    new_pipeline->is_finish = this->is_finish;
+    new_pipeline->is_root = this->is_root;
 	// Step 7: 关联执行上下文
     new_execute_context->set_pipeline(new_pipeline);
     return new_pipeline;
