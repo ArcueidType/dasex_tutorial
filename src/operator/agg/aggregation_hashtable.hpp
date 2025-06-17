@@ -68,6 +68,7 @@ public:
     std::vector<int8_t> bucket_map;       // 统计那个桶被使用，合并时就不用遍历所有桶了
     std::vector<int> group_set;
     std::vector<AggFunctionType> aggregate_function_types;
+    int used_bucket_num = 0;
     int total_group_num = 0;                    // 统计该HT中共有多少个分组
 public:
     AggHashTable(std::vector<int> group_set, std::vector<AggFunctionType> aggregate_function_types,
@@ -83,6 +84,7 @@ public:
                          std::vector<std::shared_ptr<Value>> &value,
                          std::vector<int> &star_bitmap);
     void MergeState(std::shared_ptr<AggHashTable> &other);
+    void ResizeBuckets();
 };
 
 class RadixPartitionTable {

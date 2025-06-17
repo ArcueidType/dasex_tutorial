@@ -426,8 +426,9 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherData(std::vector<std::shared_pt
                                                       int count,
                                                       std::vector<size_t> &hashes) {
     std::shared_ptr<ProbeState> probe_state = std::make_shared<ProbeState>();
-    probe_state->bit_map.resize(count);
-    probe_state->left_result.resize(schema->num_fields());
+    // probe_state->bit_map.resize(count);
+    probe_state->InitBitmap(count);
+    // probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
         // if(!bloom_filter->IsInBloomFilter(hashes[i])) {
         //     probe_state->bit_map[i] = 0;
@@ -438,7 +439,7 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherData(std::vector<std::shared_pt
         // 畅：添加相关计算tagged_info操作
         size_t probe_tagged = ExtractTaggedInfo(hashes[i]);
         if ((probe_tagged | bucket->tagged_info_or) != probe_tagged) {
-            probe_state->bit_map[i] = 0;
+            // probe_state->bit_map[i] = 0;
             // spdlog::info("触发了tagged_info");
             continue;
         }
@@ -506,11 +507,16 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherData(std::vector<std::shared_pt
             if(flag){
                 is_match = true;
                 probe_state->AddMatch(i);
-                VALUE &row_data = entry_single->val;
-                AppendRowToValueVec(probe_state->left_result, row_data);
+                // VALUE &row_data = entry_single->val;
+                // AppendRowToValueVec(probe_state->left_result, row_data);
+                // 畅
+                probe_state->matched_entries.emplace_back(entry_single); 
             }
         } // for
-        probe_state->bit_map[i] = is_match ? 1 : 0;
+        // probe_state->bit_map[i] = is_match ? 1 : 0;
+        if (is_match) {
+            probe_state->SetBit(i);
+        }
     } // for
     return probe_state;
 }
@@ -520,11 +526,12 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherSemiData(std::vector<std::share
                                                       int count,
                                                       std::vector<size_t> &hashes) {
     std::shared_ptr<ProbeState> probe_state = std::make_shared<ProbeState>();
-    probe_state->bit_map.resize(count);
+    // probe_state->bit_map.resize(count);
+    probe_state->InitBitmap(count);
     probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
         if(!bloom_filter->IsInBloomFilter(hashes[i])) {
-            probe_state->bit_map[i] = 0;
+            // probe_state->bit_map[i] = 0;
             continue;
         }
         auto &bucket = buckets[bucket_idx[i]];
@@ -893,7 +900,10 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherSemiData(std::vector<std::share
                 break;
             }
         } // for
-        probe_state->bit_map[i] = is_match ? 1 : 0;
+        // probe_state->bit_map[i] = is_match ? 1 : 0;
+        if (is_match) {
+            probe_state->SetBit(i);
+        }
     } // for
     return probe_state;
 }
@@ -903,11 +913,12 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherAntiData(std::vector<std::share
                                                       int count,
                                                       std::vector<size_t> &hashes) {
     std::shared_ptr<ProbeState> probe_state = std::make_shared<ProbeState>();
-    probe_state->bit_map.resize(count);
+    // probe_state->bit_map.resize(count);
+    probe_state->InitBitmap(count);
     probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
         if(!bloom_filter->IsInBloomFilter(hashes[i])) {
-            probe_state->bit_map[i] = 0;
+            // probe_state->bit_map[i] = 0;
             continue;
         }
         auto &bucket = buckets[bucket_idx[i]];
@@ -1273,7 +1284,10 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherAntiData(std::vector<std::share
                 is_match = true;
             }
         } // for
-        probe_state->bit_map[i] = is_match ? 1 : 0;
+        // probe_state->bit_map[i] = is_match ? 1 : 0;
+        if (is_match) {
+            probe_state->SetBit(i);
+        }
     } // for
     return probe_state;
 }
@@ -1289,11 +1303,29 @@ void JoinHashTable::GetJoinResult<JoinTypes::INNER>(std::shared_ptr<arrow::Recor
     if(match.empty()) {
         return;
     }
+     
+    int col_num_L = schema->num_fields();
+    std::vector<std::vector<std::shared_ptr<Value>>> left_result;
+    left_result.resize(col_num_L);
+
+    for (auto &entry : probe_state->matched_entries) {
+        const auto &val = entry->val;
+        if (val.size() != col_num_L) {
+            throw std::runtime_error("Mismatched entry column count during materialization");
+        }
+        for (int i = 0; i < col_num_L; i++) {
+            left_result[i].emplace_back(val[i]);
+        }
+    }
+
     std::vector<std::shared_ptr<arrow::Array>> build_columns;
-    ValueVecToArrayVec(probe_state->left_result, build_columns);
+    ValueVecToArrayVec(left_result, build_columns);
+
     std::shared_ptr<arrow::RecordBatch> rbR;
     Util::RecordBatchSlice2(chunk, rbR, match);
-    int col_num_L = probe_state->left_result.size();
+
+    // int col_num_L = probe_state->left_result.size();
+
     int col_num_R = rbR->num_columns();
     std::vector<std::shared_ptr<arrow::Array>> columns;
     for(int i = 0; i < col_num_L; i++) {
@@ -1314,17 +1346,30 @@ template<>
 void JoinHashTable::GetJoinResult<JoinTypes::LEFT>(std::shared_ptr<arrow::RecordBatch> &chunk, std::shared_ptr<arrow::RecordBatch> &result, std::shared_ptr<ProbeState> &probe_state, std::shared_ptr<ProbeState> &last_probe_state, bool is_final_probe) {
     auto &match = probe_state->match_row_idx;
     if(last_probe_state != nullptr) {
-        auto &bit_map = probe_state->bit_map;
-        auto &last_bit_map = last_probe_state->bit_map;
-        int size_map = bit_map.size();
-        if(!last_bit_map.empty()) {
-            for(int i = 0; i < size_map; i++) {
-                bit_map[i] |= last_bit_map[i];
-            }
+        // auto &bit_map = probe_state->bit_map;
+        // auto &last_bit_map = last_probe_state->bit_map;
+        // int size_map = bit_map.size();
+        // if(!last_bit_map.empty()) {
+        //     for(int i = 0; i < size_map; i++) {
+        //         bit_map[i] |= last_bit_map[i];
+        //     }
+        // }
+        auto &bm = probe_state->bit_map_packed;
+        auto &lbm = last_probe_state->bit_map_packed;
+        size_t min_words = std::min(bm.size(), lbm.size());
+        for (size_t i = 0; i < min_words; ++i) {
+            bm[i] |= lbm[i];
         }
         if(is_final_probe) {
-            for(int i = 0; i < size_map; i++) {
-                if(bit_map[i] == 0) {
+            // for(int i = 0; i < size_map; i++) {
+            //     if(bit_map[i] == 0) {
+            //         AppendNullRowToValueVec(probe_state->left_result, schema);
+            //         match.emplace_back(i);
+            //     }
+            // }
+            int total_rows = chunk->num_rows();
+            for (int i = 0; i < total_rows; ++i) {
+                if (!probe_state->GetBit(i)) {
                     AppendNullRowToValueVec(probe_state->left_result, schema);
                     match.emplace_back(i);
                 }
@@ -1333,10 +1378,17 @@ void JoinHashTable::GetJoinResult<JoinTypes::LEFT>(std::shared_ptr<arrow::Record
     } // if(last_probe_state != nullptr)
     else {
         if(is_final_probe) {
-            auto &bit_map = probe_state->bit_map;
-            int size_map = bit_map.size();
-            for(int i = 0; i < size_map; i++) {
-                if(bit_map[i] == 0) {
+            // auto &bit_map = probe_state->bit_map;
+            // int size_map = bit_map.size();
+            // for(int i = 0; i < size_map; i++) {
+            //     if(bit_map[i] == 0) {
+            //         AppendNullRowToValueVec(probe_state->left_result, schema);
+            //         match.emplace_back(i);
+            //     }
+            // }
+            int total_rows = chunk->num_rows();
+            for (int i = 0; i < total_rows; ++i) {
+                if (!probe_state->GetBit(i)) {
                     AppendNullRowToValueVec(probe_state->left_result, schema);
                     match.emplace_back(i);
                 }
@@ -1373,15 +1425,28 @@ template<>
 void JoinHashTable::GetJoinResult<JoinTypes::RIGHT>(std::shared_ptr<arrow::RecordBatch> &chunk, std::shared_ptr<arrow::RecordBatch> &result, std::shared_ptr<ProbeState> &probe_state, std::shared_ptr<ProbeState> &last_probe_state, bool is_final_probe) {
     auto &match = probe_state->match_row_idx;
     if(last_probe_state != nullptr) {
-        auto &bit_map = probe_state->bit_map;
-        auto &last_bit_map = last_probe_state->bit_map;
-        int size_map = bit_map.size();
-        for(int i = 0; i < size_map; i++) {
-            bit_map[i] |= last_bit_map[i];
+        // auto &bit_map = probe_state->bit_map;
+        // auto &last_bit_map = last_probe_state->bit_map;
+        // int size_map = bit_map.size();
+        // for(int i = 0; i < size_map; i++) {
+        //     bit_map[i] |= last_bit_map[i];
+        // }
+        auto &bm = probe_state->bit_map_packed;
+        auto &lbm = last_probe_state->bit_map_packed;
+        size_t min_words = std::min(bm.size(), lbm.size());
+        for (size_t i = 0; i < min_words; ++i) {
+            bm[i] |= lbm[i];
         }
         if(is_final_probe) {
-            for(int i = 0; i < size_map; i++) {
-                if(bit_map[i] == 0) {
+            // for(int i = 0; i < size_map; i++) {
+            //     if(bit_map[i] == 0) {
+            //         AppendNullRowToValueVec(probe_state->left_result, schema);
+            //         match.emplace_back(i);
+            //     }
+            // }
+            int total_rows = chunk->num_rows();
+            for (int i = 0; i < total_rows; ++i) {
+                if (!probe_state->GetBit(i)) {
                     AppendNullRowToValueVec(probe_state->left_result, schema);
                     match.emplace_back(i);
                 }
@@ -1390,10 +1455,17 @@ void JoinHashTable::GetJoinResult<JoinTypes::RIGHT>(std::shared_ptr<arrow::Recor
     } // if(last_probe_state != nullptr)
     else {
         if(is_final_probe) {
-            auto &bit_map = probe_state->bit_map;
-            int size_map = bit_map.size();
-            for(int i = 0; i < size_map; i++) {
-                if(bit_map[i] == 0) {
+            // auto &bit_map = probe_state->bit_map;
+            // int size_map = bit_map.size();
+            // for(int i = 0; i < size_map; i++) {
+            //     if(bit_map[i] == 0) {
+            //         AppendNullRowToValueVec(probe_state->left_result, schema);
+            //         match.emplace_back(i);
+            //     }
+            // }
+            int total_rows = chunk->num_rows();
+            for (int i = 0; i < total_rows; ++i) {
+                if (!probe_state->GetBit(i)) {
                     AppendNullRowToValueVec(probe_state->left_result, schema);
                     match.emplace_back(i);
                 }
@@ -1445,32 +1517,50 @@ template<>
 void JoinHashTable::GetJoinResult<JoinTypes::ANTI>(std::shared_ptr<arrow::RecordBatch> &chunk, std::shared_ptr<arrow::RecordBatch> &result, std::shared_ptr<ProbeState> &probe_state, std::shared_ptr<ProbeState> &last_probe_state, bool is_final_probe) {
     std::vector<int> no_match;
     if(last_probe_state != nullptr) {
-        auto &bit_map = probe_state->bit_map;
-        auto &last_bit_map = last_probe_state->bit_map;
-        int size_map = bit_map.size();
-        if(!last_bit_map.empty()) {
-            if(bit_map.empty()) {
-                bit_map = last_bit_map;
-            } else {
-                for(int i = 0; i < size_map; i++) {
-                    bit_map[i] |= last_bit_map[i];
-                }
-            }
+        // auto &bit_map = probe_state->bit_map;
+        // auto &last_bit_map = last_probe_state->bit_map;
+        // int size_map = bit_map.size();
+        // if(!last_bit_map.empty()) {
+        //     if(bit_map.empty()) {
+        //         bit_map = last_bit_map;
+        //     } else {
+        //         for(int i = 0; i < size_map; i++) {
+        //             bit_map[i] |= last_bit_map[i];
+        //         }
+        //     }
+        // }
+        auto &bm = probe_state->bit_map_packed;
+        auto &lbm = last_probe_state->bit_map_packed;
+        size_t min_words = std::min(bm.size(), lbm.size());
+        for (size_t i = 0; i < min_words; ++i) {
+            bm[i] |= lbm[i];
         }
         if(is_final_probe) {
-            for(int i = 0; i < bit_map.size(); i++) {
-                if(bit_map[i] == 0) {
+            int total_rows = chunk->num_rows();
+            for (int i = 0; i < total_rows; ++i) {
+                if (!probe_state->GetBit(i)) {
                     no_match.emplace_back(i);
                 }
             }
+            // for(int i = 0; i < bit_map.size(); i++) {
+            //     if(bit_map[i] == 0) {
+            //         no_match.emplace_back(i);
+            //     }
+            // }
         } // if(is_final_probe)
     } // if(last_probe_state != nullptr)
     else {
         if(is_final_probe) {
-            auto &bit_map = probe_state->bit_map;
-            int size_map = bit_map.size();
-            for(int i = 0; i < size_map; i++) {
-                if(bit_map[i] == 0) {
+            // auto &bit_map = probe_state->bit_map;
+            // int size_map = bit_map.size();
+            // for(int i = 0; i < size_map; i++) {
+            //     if(bit_map[i] == 0) {
+            //         no_match.emplace_back(i);
+            //     }
+            // }
+            int total_rows = chunk->num_rows();
+            for (int i = 0; i < total_rows; ++i) {
+                if (!probe_state->GetBit(i)) {
                     no_match.emplace_back(i);
                 }
             }

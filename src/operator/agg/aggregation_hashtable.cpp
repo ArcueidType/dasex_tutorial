@@ -186,6 +186,7 @@ int AggBucket::FindEntry(std::shared_ptr<EntryKey> &entryKey) {
         }
         if(*(bucket[i]->key) == entry) {
             res = i;
+            break;
         }
     }
     return res;
@@ -208,6 +209,7 @@ void AggHashTable::UpdateState(std::vector<std::shared_ptr<Value>> key, size_t h
         std::shared_ptr<EntrySet> entrySet = std::make_shared<EntrySet>(entryKey, states, aggregate_function_types);
         aggBucket->InsertEntrySet(entrySet);
         total_group_num++;
+        used_bucket_num++;
     } else {
         int res = aggBucket->FindEntry(entryKey);
         if(res != -1) {
@@ -220,7 +222,37 @@ void AggHashTable::UpdateState(std::vector<std::shared_ptr<Value>> key, size_t h
             total_group_num++;
         }
     }
+    if (total_group_num / used_bucket_num > AVG_BUCKET_LOAD) {
+        ResizeBuckets();
+    }
 }
+
+void AggHashTable::ResizeBuckets() {
+    int new_bucket_num = bucket_num * 2;
+    std::vector<std::shared_ptr<AggBucket>> new_buckets(new_bucket_num);
+    std::vector<int8_t> new_bucket_map(new_bucket_num);
+    used_bucket_num = 0;
+
+    for (int i = 0; i < bucket_num; ++i) {
+        if (bucket_map[i] == 0 || buckets[i] == nullptr) continue;
+        for (auto &entry : buckets[i]->bucket) {
+            if (!entry) continue;
+            size_t new_hash = entry->key->hash_val;
+            int new_idx = new_hash & (new_bucket_num - 1);
+            if (new_buckets[new_idx] == nullptr) {
+                new_buckets[new_idx] = std::make_shared<AggBucket>();
+                new_bucket_map[new_idx] = 1;
+                used_bucket_num++;
+            }
+            new_buckets[new_idx]->InsertEntrySet(entry);
+        }
+    }
+
+    buckets = std::move(new_buckets);
+    bucket_map = std::move(new_bucket_map);
+    bucket_num = new_bucket_num;
+}
+
 
 void AggHashTable::InitializeState(std::vector<std::shared_ptr<Aggstate>> &states,
                                    std::vector<std::shared_ptr<Value>> &value,

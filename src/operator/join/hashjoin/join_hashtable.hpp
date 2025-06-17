@@ -46,11 +46,25 @@ struct TupleBucket {
 struct ProbeState {
     std::vector<int> match_row_idx;   // 记录匹配行在块中的偏移量
     // TODO: 可用用更节省内存的方式表示bit_map，后续优化
-    std::vector<int8_t> bit_map;  // 记录probe块有那些行匹配到数据，那些没匹配到，1匹配，0未匹配
+    // std::vector<int8_t> bit_map;  // 记录probe块有那些行匹配到数据，那些没匹配到，1匹配，0未匹配
+    std::vector<uint64_t> bit_map_packed;
     // 探测时收集左表数据
     std::vector<VALUE> left_result;
+    // 畅：
+    std::vector<std::shared_ptr<EntrySingle>> matched_entries;
     void AddMatch(int idx) {
         match_row_idx.emplace_back(idx);
+    }
+    inline void SetBit(int i) {
+        bit_map_packed[i / 64] |= (1ULL << (i % 64));
+    }
+
+    inline bool GetBit(int i) const {
+        return (bit_map_packed[i / 64] >> (i % 64)) & 1ULL;
+    }
+
+    inline void InitBitmap(int total_rows) {
+        bit_map_packed.resize((total_rows + 63) / 64);
     }
 };
 
