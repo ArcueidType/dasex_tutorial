@@ -1094,8 +1094,10 @@ bool RecordBatchComparator(std::shared_ptr<arrow::RecordBatch> left, std::shared
     int size = sort_keys->size();
     bool res = false;
     for(int i = 0; i < size; i++) {
-        std::shared_ptr<arrow::Array> left_p = left->GetColumnByName(*((*sort_keys)[i].target.name()));
-        std::shared_ptr<arrow::Array> right_p = right->GetColumnByName(*((*sort_keys)[i].target.name()));
+        int column_index = (*sort_keys)[i].target.field_path()->indices()[0];
+
+        std::shared_ptr<arrow::Array> left_p = left->column(column_index);
+        std::shared_ptr<arrow::Array> right_p = right->column(column_index);
         LogicalType type_p = (*types)[i];
         arrow::compute::SortOrder order_type = (*sort_keys)[i].order;
         switch (type_p) {
@@ -1151,7 +1153,10 @@ void MergeRecordBatch(std::vector<std::shared_ptr<arrow::RecordBatch>> &tar, std
     for(int i = 0; i < size; i++) {
         if(tar[i] != nullptr && tar[i]->num_rows() != 0) {
             uint64_t offset = tar_idx[i]->Value(0);
-            minHeap.emplace(Element(tar[i]->Slice(offset, 1), sort_keys, types, i));
+            if (offset < tar[i]->num_rows()) {
+                auto slice = tar[i]->Slice(offset, 1);
+                minHeap.emplace(Element(slice, sort_keys, types, i));
+            }
         }
     }
     for(int i = 0; i < size; i++) {

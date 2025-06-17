@@ -10,7 +10,8 @@ void PhysicalOperator::build_pipelines(std::shared_ptr<Pipeline> &current,
 	if (is_sink()) {
 		// Step 2: 将当前算子设置为当前pipeline的source
 		// TODO: 这里需要补充代码
-		current->source = this->getptr();
+		auto cur_op = this->getptr();
+		current->source = cur_op;
 		// Step 3: 判断PipelineGroup中是否已经存在Pipeline
 		if(pipelineGroup->pipelines.empty()) {
 			// Step 4: 初始化Pipeline执行上下文，同时将当前Pipeline添加至PipelineGroup中
@@ -21,7 +22,7 @@ void PhysicalOperator::build_pipelines(std::shared_ptr<Pipeline> &current,
 		}
 		// Step 5: 从当前算子开始，递归的构建子PipelineGroup
 		// TODO: 这里需要补充代码
-		pipelineGroup->create_child_group(current->source);
+		pipelineGroup->create_child_group(cur_op);
 	}
 	// Step 6: 如果不是sink
 	else {

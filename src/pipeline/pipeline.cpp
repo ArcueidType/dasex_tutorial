@@ -91,33 +91,12 @@ PipelineResultType Pipeline::execute_pipeline()
 				//                      4. BLOCKED: 阻塞，同Source，暂无使用
 				// TODO: 这里需要补充代码
                 operator_result = operators[i]->execute_operator(execute_context);
-                // switch (operator_result) {
-                //     case OperatorResultType::HAVE_MORE_OUTPUT:
-                //         if (source_result == SourceResultType::FINISHED) {
-                //             result = PipelineResultType::FINISHED;
-                //         } else {
-                //             result = PipelineResultType::HAVE_MORE_OUTPUT;
-                //         }
-                //         break;
-                //     case OperatorResultType::NO_MORE_OUTPUT:
-                //         if (source_result == SourceResultType::FINISHED) {
-                //             result = PipelineResultType::FINISHED;
-                //         } else {
-                //             result = PipelineResultType::NO_MORE_OUTPUT;
-                //         }
-                //         break;
-                //     case OperatorResultType::FINISHED:
-                //         result = PipelineResultType::FINISHED;
-                //         break;
-                //     case OperatorResultType::BLOCKED:
-                //         result = PipelineResultType::BLOCKED;
-                //         break;
-                // }
 				// Step 5.6: 根据Operator的状态可以提前中止后续的计算，如果状态为NO_MORE_OUTPUT，后续算子其实没必要再次执行
 				// TODO: 这里需要补充代码
                 if (operator_result == OperatorResultType::NO_MORE_OUTPUT) {
                     break;
                 }
+
             } // for
         }     // operators
 		// Step 5.7: 如果Source结束，Operator为NO_MORE_OUTPUT，说明已经没有数据，结束循环。Push模型必然会多处理一个空数据块，然后才知道结束数据处理。
@@ -125,6 +104,7 @@ PipelineResultType Pipeline::execute_pipeline()
         if (operator_result == OperatorResultType::NO_MORE_OUTPUT && result != PipelineResultType::FINISHED) {
             continue;
         }
+
 		// Step 5.8: 执行Sink算子，Pipeline可以没有Sink，因此要先判断Sink是否存在
         if(sink) {
 			// Step 5.9: 调用Sink相关函数
@@ -134,21 +114,7 @@ PipelineResultType Pipeline::execute_pipeline()
 			//                                    2. FINISHED: 正常结束；
 			//									  3. BLOCKED: 阻塞，同Source，暂无使用
 			// TODO: 这里需要补充代码
-            // switch (sink_result) {
-            //     case SinkResultType::NEED_MORE_INPUT:
-            //         if (source_result == SourceResultType::FINISHED) {
-            //                 result = PipelineResultType::FINISHED;
-            //             } else {
-            //                 result = PipelineResultType::NEED_MORE_INPUT;
-            //             }
-            //             break;
-            //     case SinkResultType::FINISHED:
-            //         result = PipelineResultType::FINISHED;
-            //         break;
-            //     case SinkResultType::BLOCKED:
-            //         result = PipelineResultType::BLOCKED;
-            //         break;
-            // }
+
         }
 		// Step 5.11: 判断Pipeline是否结束
         if (result == PipelineResultType::FINISHED)
@@ -265,15 +231,17 @@ void Pipeline::Initialize(int pipe_idx, int work_id) {
 				// Step 7.1: 获取当前Pipeline的Sink，并构建对应的状态
 				// TODO: 这里需要补充代码
                 output = this->sink->GetLocalSinkState();
-                auto &output_p = (*output).Cast<AggLocalSinkState>();
+
 				// Step 7.2: 初始化Sink算子的状态信息
 				// TODO: 这里需要补充代码
+                auto &output_p = (*output).Cast<AggLocalSinkState>();
                 int partition_nums = 0;
-                if (auto pipe_group = this->pipelines.lock()) {
+                if(auto pipe_group = this->pipelines.lock()) {
                     partition_nums = pipe_group->parallelism;
                 }
                 output_p.partition_nums = partition_nums;
                 output_p.partitioned_hash_tables.resize(partition_nums);
+
 				// Step 7.3: 将输出结果记录到Sink中，在子Pipeline中作为Source使用
 				// TODO: 这里需要补充代码
                 sink->lsink_state = output;
@@ -310,28 +278,29 @@ std::shared_ptr<Pipeline> Pipeline::Copy(int work_id) {
 	std::shared_ptr<ExecuteContext> new_execute_context = std::make_shared<ExecuteContext>();
 	// Step 2: 复制Pipeline所属PipelineGroup
 	// TODO: 这里需要补充代码
-    new_pipeline->pipelines = this->pipelines;
+    new_pipeline->pipelines = pipelines;
+
 	// Step 3: 复制Pipeline的Source（调用对应的Operator::Copy()方法，无需同学们实现，下面同理）
 	// TODO: 这里需要补充代码
-    new_pipeline->source = this->source->Copy(work_id);
+    new_pipeline->source = source->Copy(work_id);
+
 	// Step 4: 复制Pipeline的Operator
 	// TODO: 这里需要补充代码
-    for (auto &op : this->operators) {
+    for (auto &op : operators) {
         new_pipeline->operators.emplace_back(op->Copy(work_id));
     }
+
 	// Step 5: 复制Pipeline的Sink
 	// TODO: 这里需要补充代码
-    if (this->sink) {
-        new_pipeline->sink = this->sink->Copy(work_id);
-    } else {
-        new_pipeline->sink = nullptr;
+    if (sink) {
+        new_pipeline->sink = sink->Copy(work_id);        
     }
+
 	// Step 6: 复制其它执行信息
 	// TODO: 这里需要补充代码
     new_pipeline->work_id = work_id;
-    new_pipeline->is_final_chunk = this->is_final_chunk;
-    new_pipeline->is_finish = this->is_finish;
-    new_pipeline->is_root = this->is_root;
+    new_pipeline->is_root = is_root;
+
 	// Step 7: 关联执行上下文
     new_execute_context->set_pipeline(new_pipeline);
     return new_pipeline;

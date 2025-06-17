@@ -47,6 +47,7 @@ void PipelineGroupExecute::plan_dfs(std::shared_ptr<PipelineGroup> root, int gro
 
 void PipelineGroupExecute::execute() {
     while (!pipe_stack.empty()) {
+        auto start_execute = std::chrono::steady_clock::now();
 		// Step 1: 从栈中依次取出一个PipelineGroup节点执行
         std::shared_ptr<PipelineGroup> node = pipe_stack.top();
         pipe_stack.pop();
@@ -92,6 +93,8 @@ void PipelineGroupExecute::execute() {
                     break;
             }
         } // if
+        auto end_execute = std::chrono::steady_clock::now();
+        spdlog::info("[{} : {}] pipeline执行时间: {}", __FILE__, __LINE__, Util::time_difference(start_execute, end_execute));
     }
 }
 

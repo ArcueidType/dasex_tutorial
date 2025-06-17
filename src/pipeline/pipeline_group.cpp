@@ -38,7 +38,7 @@ void PipelineGroup::Initialize() {
 		// Step 4: 根据并行度，Copy出对应数量的Pipeline，同时配置依赖关系
 		// TODO: 这里需要补充代码（实现Pipeline::Copy()方法）
 		for (int i = 0; i < parallelism_count - 1; i++) {
-			auto copy_pipeline = this->pipelines[0]->Copy(partition_info[i]);
+			auto copy_pipeline = this->pipelines[0]->Copy(partition_info[i+1]);
 			if (!is_root) {
 				copy_pipeline->parent = this->dependencies[0]->pipelines[i+1];
 				this->dependencies[0]->pipelines[i+1]->child = copy_pipeline;
@@ -58,9 +58,11 @@ void PipelineGroup::Initialize() {
 		// Step 8: 根据取并行度Copy出对应数量的Pipeline，同时配置依赖关系
 		// TODO: 这里需要补充代码
 		for (int i = 0; i < parallelism_count - 1; i++) {
-			auto copy_pipeline = this->pipelines[0]->Copy(this->dependencies[0]->pipelines[i+1]->work_id);
-			copy_pipeline->parent = this->dependencies[0]->pipelines[i+1];
-			this->dependencies[0]->pipelines[i+1]->child = copy_pipeline;
+			auto copy_pipeline = this->pipelines[0]->Copy(i+1);
+			if (!is_root) {
+				copy_pipeline->parent = this->dependencies[0]->pipelines[i+1];
+				this->dependencies[0]->pipelines[i+1]->child = copy_pipeline;
+			}
 			this->add_pipeline(copy_pipeline);
 		}
 		// Step 9: 初始化每条Pipeline，配置输入输出
