@@ -100,7 +100,7 @@ SinkResultType PhysicalMultiFieldHashAgg::sink(std::shared_ptr<ExecuteContext> &
 
 void PhysicalMultiFieldHashAgg::local_agg(std::shared_ptr<arrow::RecordBatch> &chunk, MultiFieldAggLocalSinkState &state) const {
     auto &partition_table = state.partition_table;
-	printf("chunk is %s",chunk->ToString().c_str());
+	// printf("chunk is %s",chunk->ToString().c_str());
     partition_table->InsertData(chunk);
 }
 

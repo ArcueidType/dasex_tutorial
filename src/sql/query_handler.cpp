@@ -4,6 +4,7 @@
 #include "bound_statement.hpp"
 #include "optimizer.hpp"
 #include "physical_result_collector.hpp"
+#include "physical_order.hpp"
 #include "pipe.h"
 #include "planner.hpp"
 #include "time_help.hpp"
@@ -72,7 +73,18 @@ RC QueryHandler::Query(std::string sql, bool verbose /*true*/)
             pipeline_group_executor->execute();
             scheduler->shutdown();
             // FIXME: 这里只能拿到最后一个chunk的数据，奇怪呀
-            res = physical_ops[0]->GetLocalSourceState()->Cast<PhysicalResultCollectorLocalSourceState>().local_result;
+            // res = physical_ops[0]->GetLocalSourceState()->Cast<PhysicalResultCollectorLocalSourceState>().local_result;
+            auto state = physical_ops[0]->GetLocalSourceState();
+            if (auto *collector = dynamic_cast<PhysicalResultCollectorLocalSourceState *>(state.get())) {
+                res = collector->local_result;
+            }
+            // 再判断是否为 OrderLocalSourceState
+            else if (auto *order = dynamic_cast<OrderLocalSourceState *>(state.get())) {
+                res = order->result;
+            }
+            else {
+                throw std::runtime_error("Unsupported LocalSourceState type in GetLocalSourceState()");
+            }
             if (res) {
                  DisplayChunk(*res, 10);
                 result_temp.result_chunks = *res;
