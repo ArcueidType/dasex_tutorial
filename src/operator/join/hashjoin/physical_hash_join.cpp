@@ -249,13 +249,13 @@ void PhysicalHashJoin::build_pipelines(std::shared_ptr<Pipeline> &current, std::
 	// Step 1: 先执行探测端Pipeline的构建
 	//     Step 1.1: 将当前算子添加至当前Pipeline中
 	//     TODO: 这里需要补充代码
-    auto cur_operator = this->getptr();
-    current->operators.push_back(cur_operator);
+    current->operators.push_back(this->getptr());
 	//     Step 1.2: 递归执行右侧孩子（右侧为探测端）
 	//     TODO: 这里需要补充代码
     this->children_operator[1]->build_pipelines(current, pipelineGroup);
 	// Step 2: 执行构建端Pipeline的构建，从当前算子开始，递归构建子PipelineGroup
 	//     TODO: 这里需要补充代码
+    auto cur_operator = this->getptr();
     pipelineGroup->create_child_group(cur_operator);
 }
 

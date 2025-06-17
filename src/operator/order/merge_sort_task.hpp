@@ -36,10 +36,11 @@ public:
         }
         if(tar_p != nullptr) {
             for(int i = 0; i < col_nums; i++) {
-                std::string col_name = tar_p->column_name((*sort_keys)[i]);
+                // std::string col_name = tar_p->column_name((*sort_keys)[i]);
+                int column_index = (*sort_keys)[i];
                 SortOrder inter_order = (*orders)[i];
                 arrow::compute::SortOrder order = inter_order == SortOrder::DESCENDING ? arrow::compute::SortOrder::Descending : arrow::compute::SortOrder::Ascending;
-                arrow_sort_keys.emplace_back(arrow::compute::SortKey(col_name, order));
+                arrow_sort_keys.emplace_back(arrow::compute::SortKey(column_index, order));
             }
             std::vector<std::shared_ptr<arrow::RecordBatch>> &res = global_sink_state.global_sort_data;
             // spdlog::info("[{} : {}] MergeSortTask结果: {}", __FILE__, __LINE__, res.size());

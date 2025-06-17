@@ -23,10 +23,7 @@ namespace DaseX {
 void PipelineGroupExecute::traverse_plan() {
 	// Step 1: 使用栈来保存遍历PipelineGroup树的结果，在每次遍历前清空上一次的结果
 	// TODO: 这里需要补充代码
-    while (!this->pipe_stack.empty())
-    {
-        this->pipe_stack.pop();
-    }
+    this->pipe_stack = std::stack<std::shared_ptr<PipelineGroup>>();
     
 	// Step 2： 使用 DFS 遍历整个计划并将结果保存在 pipe_stack 中
 	// TODO: 这里需要补充代码

@@ -171,10 +171,11 @@ arrow::Status PhysicalOrder::SortInLocal(OrderLocalSinkState &input) {
     std::vector<arrow::compute::SortKey> arrow_sort_keys;
     int col_nums = sort_keys->size();
     for(int i = 0; i < col_nums; i++) {
-        std::string col_name = input.sort_data->column_name((*sort_keys)[i]);
+        // std::string col_name = input.sort_data->column_name((*sort_keys)[i]);
+        int column_index = (*sort_keys)[i];
         SortOrder inter_order = (*orders)[i];
         arrow::compute::SortOrder order = inter_order == SortOrder::DESCENDING ? arrow::compute::SortOrder::Descending : arrow::compute::SortOrder::Ascending;
-        arrow_sort_keys.emplace_back(arrow::compute::SortKey(col_name, order));
+        arrow_sort_keys.emplace_back(arrow::compute::SortKey(column_index, order));
     }
     arrow::compute::SortOptions sort_options(arrow_sort_keys);
     ARROW_ASSIGN_OR_RAISE(res, arrow::compute::CallFunction("sort_indices", {input.sort_data}, &sort_options));

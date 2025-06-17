@@ -65,6 +65,7 @@
 #include "seq_scan_plan.h"
 #include "sort_plan.h"
 #include "llm_expression.h"
+#include <spdlog/spdlog.h>
 
 namespace DaseX {
 
@@ -771,15 +772,6 @@ void Planner::AddAggCallToContext(BoundExpression &expr, std::vector<std::string
             return;
         }
         case ExpressionType::COLUMN_REF: {
-            // auto &col_expr = dynamic_cast<BoundColumnRef &>(expr);
-            // std::vector<std::string> col_name = col_expr.col_name_;
-            // if (!schema_name.empty())
-            // {
-            //   col_name[0] = schema_name;
-            // }
-            // auto col = std::make_unique<BoundColumnRef>(col_name);
-            // schema_names.push_back(col->ToString());
-            // ctx_.aggregations_.push_back(std::move(col));
             return;
         }
         case ExpressionType::BINARY_OP: {
@@ -789,15 +781,6 @@ void Planner::AddAggCallToContext(BoundExpression &expr, std::vector<std::string
             return;
         }
         case ExpressionType::CONSTANT: {
-            // auto &const_expr = dynamic_cast<BoundConstant &>(expr);
-            // std::vector<std::string> col_name = {const_expr.ToString()};
-            // if (!schema_name.empty())
-            // {
-            //   col_name[0] = schema_name;
-            // }
-            // auto col = std::make_unique<BoundConstant>(col_name);
-            // schema_names.push_back(col->ToString());
-            // ctx_.aggregations_.push_back(std::move(col));
             return;
         }
         case ExpressionType::ALIAS: {
@@ -806,44 +789,56 @@ void Planner::AddAggCallToContext(BoundExpression &expr, std::vector<std::string
             return;
         }
         default:
-            break;
+            return;
     }
 }
 
+/* 对于查询
+SELECT region, SUM(sales)
+FROM orders
+GROUP BY region;
+
+proj_exprs 表示	region_expr, sales_expr
+group_by_expr 表示 region_expr
+agg_exprs 表示 sales_expr
+现在sum里的东西不能是group by的列，否则会出问题
+*/
 auto Planner::PlanSelectAgg(const SelectStatement &statement,
                             AbstractPlanNodeRef child) -> AbstractPlanNodeRef {
     auto guard = NewContext();
     ctx_.allow_aggregation_ = true;
-    std::vector<std::string> schema_names;
+    std::vector<std::string> agg_schema_names;
+    // 先提取出所有agg表达式
+    // having先进ctx，也会先出
     if (!statement.having_->IsInvalid()) {
-        AddAggCallToContext(*statement.having_, schema_names);
+        AddAggCallToContext(*statement.having_, agg_schema_names);
     }
 
     for (auto &item : statement.select_list_) {
-        AddAggCallToContext(*item, schema_names);
+        AddAggCallToContext(*item, agg_schema_names);
     }
     std::vector<AbstractExpressionRef> proj_exprs;
     std::vector<AbstractExpressionRef> group_by_expr;
     std::vector<std::string> outputschema_col_names;
-    // std::vector<std::string> proj_col_names;
 
-  size_t group_idx = 0;
+  // 先处理groupby (output的前半部分)
+  size_t proj_idx = 0;
   for (const auto &expr : statement.group_by_) {
       auto [col_name, ab_expr] = PlanExpression(*expr, {child});
-      group_by_expr.emplace_back(std::make_shared<ColumnValueExpression>(0, group_idx++, ab_expr->GetReturnType()));
+      group_by_expr.emplace_back(std::make_shared<ColumnValueExpression>(0, proj_idx++, ab_expr->GetReturnType()));
       proj_exprs.emplace_back(std::move(ab_expr));
       // 这里存在别名问题，SELECT 中对 group by 列做别名，无法正确生效。例如：OptimizerTPCHTestQ2FourThreadComplete
       /// @TODO: 通过在 Aggregate 上套 Projection 来解决
       outputschema_col_names.emplace_back(std::move(col_name));
   }
 
-  for (std::string &schema_name : schema_names) {
+  // 再处理后半部分的agg
+  for (std::string &schema_name : agg_schema_names) {
     outputschema_col_names.emplace_back(std::move(schema_name));
   }
 
   std::vector<AbstractExpressionRef> agg_exprs;
   std::vector<AggregationType> agg_types;
-  auto agg_begin_idx = group_by_expr.size();
 
   size_t term_idx = 0;
   for (const auto &item : ctx_.aggregations_) {
@@ -861,7 +856,6 @@ auto Planner::PlanSelectAgg(const SelectStatement &statement,
           assert(func_name == "count_star");
           agg_types.push_back(AggregationType::CountStarAggregate);
       } else if (exprs.size() == 1) {
-          // auto expr = std::move(exprs[0]);
           if (func_name == "min") {
               agg_types.push_back(AggregationType::MinAggregate);
           }
@@ -877,81 +871,65 @@ auto Planner::PlanSelectAgg(const SelectStatement &statement,
           if (func_name == "avg") {
               agg_types.push_back(AggregationType::AvgAggregate);
           }
-      }
-
-      if (exprs.empty()) {
-          // constant 重写类型系统，将 count * 转为 count 1
-          /// @FIXME: 这里不能 count(1) 但是 count(1+1) 或者 count(column) 是可以的
-          // 默认 count 第一列 不是合理的实现方式
-          agg_exprs.emplace_back(std::make_shared<ColumnValueExpression>(0, 0, LogicalType::INTEGER));
-          // proj_exprs.emplace_back(std::make_shared<ConstantValueExpression>(Value(1)));
       } else {
-          agg_exprs.emplace_back(std::make_shared<ColumnValueExpression>(0, agg_begin_idx + term_idx, exprs[0]->GetReturnType()));
-          proj_exprs.emplace_back(std::move(exprs[0]));
-          term_idx += 1;
+        spdlog::info("[{} : {}] agg表达式不能有超过一个参数");
+        assert(0);
       }
 
-       ctx_.expr_in_agg_.emplace_back(
-               std::make_unique<ColumnValueExpression>(0, agg_begin_idx + term_idx - 1 , LogicalType::FLOAT));
+      //  ctx_.expr_in_agg_.emplace_back(
+      //          std::make_unique<ColumnValueExpression>(0, agg_begin_idx + term_idx - 1 , LogicalType::FLOAT));
+      if (exprs.empty()) {
+          // 用常量 1 表示 count(*) 的表达式，让 ProjectionPlanNode 生成对应列
+          // @FIXME: 这里不能 count(1) 但是 count(1+1) 或者 count(column) 是可以的
+          // 默认 count 第一列 不是合理的实现方式
+          auto count_star_expr = std::make_shared<ConstantValueExpression>(Value(1));
+          agg_exprs.emplace_back(std::make_shared<ColumnValueExpression>(0, 0, LogicalType::INTEGER));
+          ctx_.expr_in_agg_.emplace_back(std::make_unique<ColumnValueExpression>(
+              0, proj_idx, LogicalType::INTEGER));          
+      } else {
+          // 不能和groupby里的列一样，否则对相同列投影了两遍
+          proj_exprs.emplace_back(std::move(exprs[0]));
+          agg_exprs.emplace_back(std::make_shared<ColumnValueExpression>(0, proj_idx, proj_exprs.back()->GetReturnType()));
+          ctx_.expr_in_agg_.emplace_back(std::make_unique<ColumnValueExpression>(
+              0, proj_idx++, agg_exprs.back()->GetReturnType()));  
+      }
 
   }
 
+  // 处理完子agg表达式后，重做这一部分Plan，拥有proj、agg、filter(have)
   AbstractPlanNodeRef proj = std::make_shared<ProjectionPlanNode>(
     std::make_shared<arrow::Schema>(ProjectionPlanNode::InferProjectionSchema(proj_exprs)),
     proj_exprs, std::move(child));
 
   auto agg_output_schema = AggregationPlanNode::InferAggSchema(group_by_expr, agg_exprs, agg_types);
 
+
   AbstractPlanNodeRef plan = std::make_shared<AggregationPlanNode>(
           std::make_shared<arrow::Schema>(ProjectionPlanNode::RenameSchema(agg_output_schema, outputschema_col_names)), std::move(proj),
           std::move(group_by_expr), std::move(agg_exprs), std::move(agg_types));
 
-    if (!statement.having_->IsInvalid()) {
-        auto [_, expr] = PlanExpression(*statement.having_, {plan});
-        plan = std::make_shared<FilterPlanNode>(std::make_shared<arrow::Schema>(plan->OutputSchema()), std::move(expr),
-                                                std::move(plan));
-    }
+  if (!statement.having_->IsInvalid()) {
+      auto [_, expr] = PlanExpression(*statement.having_, {plan});
+      plan = std::make_shared<FilterPlanNode>(std::make_shared<arrow::Schema>(plan->OutputSchema()), std::move(expr),
+                                              std::move(plan));
+  }
 
 	 // return plan;
+  std::vector<AbstractExpressionRef> final_exprs;
+  std::vector<std::string> final_output_col_names;
 
-    std::vector<AbstractExpressionRef> exprs;
-    std::vector<std::string> final_output_col_names;
-    std::vector<AbstractPlanNodeRef> children = {plan};
+  for (const auto &item : statement.select_list_) {
+      auto [name, expr] = PlanExpression(*item, {plan});
+      final_exprs.emplace_back(std::move(expr));
+      final_output_col_names.emplace_back(std::move(name));
+  }
 
-    for (const auto &item : statement.select_list_) {
+  auto final_schema = ProjectionPlanNode::RenameSchema(
+    ProjectionPlanNode::InferProjectionSchema(final_exprs), final_output_col_names);
 
-        auto [name, expr] = PlanExpression(*item, {plan});
-
-//		if (expr->expression_class_ == ExpressionClass::FUNCTION && expr->children_.size() == 2 &&
-//			expr->children_[0]->expression_class_ == ExpressionClass::COLUMN_REF &&
-//					expr->children_[1]->expression_class_ == ExpressionClass::COLUMN_REF) {
-//				std::vector<AbstractExpressionRef> exprs_change;
-//				auto temp_1 = expr->children_[0]->Cast<ColumnValueExpression &>();
-//				auto temp_2 = expr->children_[1]->Cast<ColumnValueExpression &>();
-//				if(temp_1.GetColIdx() == 1 && temp_2.GetColIdx() == 2) {
-//					exprs_change.push_back(std::make_shared<ColumnValueExpression>(0,0,LogicalType::FLOAT,0));
-//					exprs_change.push_back(std::make_shared<ColumnValueExpression>(0,1,LogicalType::FLOAT,0));
-//				}
-//
-//			expr->children_ = exprs_change;
-//			exprs.push_back(std::move(expr));
-//
-//		} else {
-//
-//			exprs.push_back(std::move(expr));
-//		}
-//
-		exprs.push_back(std::move(expr));
-
-        final_output_col_names.emplace_back(std::move(name));
-    }
-
-
-
-    return std::make_shared<ProjectionPlanNode>(
-            std::make_shared<arrow::Schema>(
-                    ProjectionPlanNode::RenameSchema(ProjectionPlanNode::InferProjectionSchema(exprs), final_output_col_names)),
-            std::move(exprs), std::move(plan));
+  return std::make_shared<ProjectionPlanNode>(
+      std::make_shared<arrow::Schema>(final_schema),
+      std::move(final_exprs), std::move(plan));
 }
 
 auto Planner::PlanCase(const BoundCase &expr,
