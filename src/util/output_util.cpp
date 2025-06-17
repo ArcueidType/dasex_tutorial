@@ -23,8 +23,12 @@ void DisplayChunk(std::shared_ptr<arrow::RecordBatch> &record_batch, int limit, 
         return;
     }
 
-    auto names = std::move(record_batch->ColumnNames());
+    std::vector<std::string> names;
+    // auto names = std::move(record_batch->column_name());
     std::vector<size_t> width(record_batch->num_columns(), 0);
+    for (int i=0; i < record_batch->num_columns(); i++) {
+        names.emplace_back(record_batch->column_name(i));
+    }
     
     // Get the width of each column
     for (int i=0; i < names.size(); i++) {

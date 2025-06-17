@@ -1235,8 +1235,9 @@ arrow::Status OpenParquetFile(
 	ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(file_path));
 
 	// 创建 Parquet 文件读取器
-	ARROW_ASSIGN_OR_RAISE(auto reader,
-	parquet::arrow::OpenFile(infile, arrow::default_memory_pool()))
+	std::unique_ptr<parquet::arrow::FileReader> reader;
+	ARROW_RETURN_NOT_OK(parquet::arrow::OpenFile(
+		infile, arrow::default_memory_pool(), &reader));
 
 	// 获取 Parquet 文件的 schema，并检查
 	std::shared_ptr<arrow::Schema> schema;
@@ -1289,8 +1290,9 @@ arrow::Status ReadRecordBatchFromDisk(
 	ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(file_path));
 
 	// 创建 Parquet 文件读取器
-	ARROW_ASSIGN_OR_RAISE(auto reader,
-	parquet::arrow::OpenFile(infile, arrow::default_memory_pool()))
+	std::unique_ptr<parquet::arrow::FileReader> reader;
+	ARROW_RETURN_NOT_OK(parquet::arrow::OpenFile(
+		infile, arrow::default_memory_pool(), &reader));
 
 	// 获取 Parquet 文件的 schema，并检查
 	std::shared_ptr<arrow::Schema> schema;
