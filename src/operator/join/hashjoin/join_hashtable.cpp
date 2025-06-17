@@ -40,6 +40,11 @@ inline float RoundToDecimalPlaces(float value, int precision) {
     return std::round(value * factor) / factor;
 }
 
+// 畅：取tagged_info（默认取hash值高24位）
+inline uint32_t ExtractTaggedInfo(size_t hash, int bits = 24) {
+    return static_cast<uint32_t>(hash >> (64 - bits));
+}
+
 // 提取sel_vec指定的列
 inline std::vector<std::shared_ptr<arrow::Array>> SelectColumns(std::shared_ptr<arrow::RecordBatch> &chunk,
                                                                 std::vector<int> &sel_vec) {
@@ -263,7 +268,18 @@ void JoinHashTable::Build(std::shared_ptr<arrow::RecordBatch> &chunk) {
     }
     // 计算每行数据应该属于那个桶
     std::vector<int> bucket_idx = ComputeBucketIndices(hashes, num_rows);
-    ScatterData(bucket_idx, num_rows, hashes);
+    // 畅：调用计算tagged_info
+    std::vector<uint32_t> tagged_infos = ComputeTaggedInfo(hashes);
+    ScatterData(bucket_idx, num_rows, hashes, tagged_infos);
+}
+
+// 畅：计算tagged_info的封装函数
+std::vector<uint32_t> JoinHashTable::ComputeTaggedInfo(const std::vector<size_t>& hashes) {
+    std::vector<uint32_t> tagged_infos(hashes.size());
+    for (int i = 0; i < hashes.size(); ++i) {
+        tagged_infos[i] = ExtractTaggedInfo(hashes[i]);
+    }
+    return tagged_infos;
 }
 
 std::vector<size_t> JoinHashTable::Hashs(std::vector<std::shared_ptr<arrow::Array>> &join_keys, int count) {
@@ -334,7 +350,8 @@ std::vector<int> JoinHashTable::ComputeBucketIndices(std::vector<size_t> &join_k
     return bucket_idx;
 }
 
-void JoinHashTable::ScatterData(std::vector<int> &bucket_idx, int count, std::vector<size_t> &hashs) {
+// 畅：修改了函数参数，以及写入EntrySingle的参数
+void JoinHashTable::ScatterData(std::vector<int> &bucket_idx, int count, std::vector<size_t> &hashs, std::vector<uint32_t> &tagged_infos) {
     std::vector<std::vector<std::shared_ptr<DaseX::Value>>> rows;
     RbToRowVec(data_chunks[nums_chunk], rows);
     for(int i = 0; i < count; i++) {
@@ -344,7 +361,7 @@ void JoinHashTable::ScatterData(std::vector<int> &bucket_idx, int count, std::ve
         for(int j = 0; j < build_ids.size(); j++) {
             key_row.emplace_back(val_row[build_ids[j]]);
         }
-        std::shared_ptr<EntrySingle> entry_p = std::make_shared<EntrySingle>(key_row, val_row, hashs[i]);
+        std::shared_ptr<EntrySingle> entry_p = std::make_shared<EntrySingle>(key_row, val_row, hashs[i], tagged_infos[i]);
         bucket->InsertEntry(entry_p);
     }
     nums_chunk++;
@@ -415,6 +432,13 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherData(std::vector<std::shared_pt
             continue;
         }
         auto &bucket = buckets[bucket_idx[i]];
+        // 畅：添加相关计算tagged_info操作
+        uint32_t probe_tagged = ExtractTaggedInfo(hashes[i]);
+        if ((probe_tagged | bucket->tagged_info_or) != probe_tagged) {
+            probe_state->bit_map[i] = 0;
+            continue;
+        }
+        // 下面没改
         int tuple_nums = bucket->tuple_nums;
         bool is_match = false;
         size_t hash_p = hashes[i];
