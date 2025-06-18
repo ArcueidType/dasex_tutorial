@@ -8,7 +8,7 @@
 
 ## Hash Join性能优化
 
-为了提高TPCH测试中各种查询的性能，我们着重对Hash Join算子进行了一系列优化。
+为了提高TPCH测试中各种查询的性能，我们首先尝试对Hash Join算子进行优化。
 
 未进行优化改动时，原本运行TPCH-Q4的速度：
 
@@ -18,18 +18,13 @@
 
 ### 哈希冲突造成的性能影响
 
-在Hash Join算子执行的过程中，哈希冲突对性能的影响是显著的，比如以下几个方面：
+在Hash Join算子执行的过程中，哈希冲突对性能的影响是显著的，最直接的影响就是 **探测成本增加了**，在Probe阶段，每个键通过hash值定位到桶(bucket)，再线性查找比较桶内的所有entry。如果哈希冲突严重，每个桶内entry数量很多，会导致哈希连接的效果差。最极端的情况下，所有键都落在同一个bucket内，此时理论复杂度和NestedLoopJoin相同，但由于额外的哈希计算反而会导致性能降低。
 
-+ **探测成本增加**：在Probe阶段，每个键通过hash值定位到桶(bucket)，再线性查找比较桶内的所有entry。如果哈希冲突严重，每个桶内entry数量多，导致遍历成本上升。
-+ **Bloom Filter效果减弱**：冲突过多会增大Bloom Filter的误判率，降低其过滤key的效率。
-+ **内存占用不均衡**：哈希冲突可能导致桶中数据分布不均匀，造成**cache miss**增多，访问延迟增加。
-+ **Semi/Anti Join去重困难**：哈希冲突导致每个桶内entry多，去重逻辑变复杂，影响效率。
+本数据库中的Hash Join采用的是固定大小的哈希表，在哈希表大小固定时，随着表的大小增加，哈希冲突数量不可避免的会上升，**如何减缓哈希冲突导致的Probe性能下降** 是我们第一个尝试优化的问题：
 
-因此，我们组针对这些情况对Join算子和Aggregate算子进行了优化，减少了哈希冲突以及其带来的潜在性能问题。
+### TagInfo
 
-### Hash Join lookup优化
-
-下面通过一个例子讲解哈希冲突对Probe造成的性能影响，以及我们提出的解决方法。
+下面通过一个例子讲解哈希冲突对Probe造成的性能影响：
 
 为了方便，这里假设每个entry的`Hash value`为32位，低12位作为哈希键。假设Build端有这四行数据：
 
@@ -51,46 +46,57 @@
 
 这两行数据的哈希键也是**0x123**，因此在Probe阶段这两行数据都要与Build端的4行数据进行比较。然而，由于它们的实际哈希值与上面4行数据均不匹配，这8次比较都以失败告终。这样的情况发生过多无疑会导致性能问题。
 
-为了减少和尽量避免这种最终会导致失败并产生额外开销的探测，我们提出了一种优化方法：在每个Entry中引入一个独有的标签字段（我们称之为`Tagged info`），并在每个`bucket`中同样维护一个变量，作为其中所有Entry的`Tagged info`信息的汇总。
+数据库原本实现中，采用了全局的Bloom Filter记录所有build端的hash key，然后对于每次probe，都先通过Bloom Filter判断该条probe的hash key是否存在于build中，如果发现不存在则直接跳过该条记录。然而，此Bloom Filter是全局使用的，若build端数据较多会导致误判率较高，从而导致更多的无效探测。
 
-在我们的设计中，`Tagged info`使用了`Hash value`的高n位，例如对于64位的`Hash value`，取 n = 24。针对上面的例子，我们假设这里取 n = 12。那么上述Build端你的数据的`Tagged info`即为：
+我们引入了 `Tag Info` 来对每个bucket中的条目进行过滤，每个bucket保存自己对应的 `Tag Info`：
 
-| 行 | Hash value | Tagged info |
+首先对 `Tag Info` 进行介绍：
+
+`Tag info` 使用 `Hash value` 的前n位进行操作。`Tag info` 存储在bucket中，初始值为0，假设哈希值长度为64位，在每次bucket中有新条目进入时更新，对于 `Hash value` 为 `hash` 的新条目，更新方式为：
+$$
+TagInfo = TagInfo | (hash >> (64-n))
+$$
+继续使用上面的例子，我们假设这里取 n = 12。那么上述Build端的数据的`Tag info`即为：
+
+| 行 | Hash value | Tag info |
 |:---:|:---:|:---:|
 |Row 1|0x123ab123|0x123|
 |Row 2|0x234cd123|0x234|
 |Row 3|0x123ab123|0x123|
 |Row 4|0x21abc123|0x21a|
 
-在Build端开始构建哈希表时，对每个`bucket`维护的`Tagged info slot`初始化，每插入一个entry就根据该entry的`Tagged info`字段更新`Tagged info slot`变量，其更新操作是对其进行**按位或(bitwise OR)**操作。例如存储上述4条数据的`bucket`的`Tagged info slot`更新过程为：
-+ 初始化bucket时，Tagged info slot = 0；
-+ 存入Row 1时，Tagged info slot 更新为 0 | 0x123 = 0x123；
-+ 存入Row 2时，Tagged info slot 更新为 0x123 | 0x234 = 0x337；
-+ 存入Row 3时，Tagged info slot 更新为 0x337 | 0x123 = 0x337；
-+ 存入Row 4时，Tagged info slot 更新为 0x337 | 0x21a = 0x33f。
++ 初始化bucket时，Tag info = 0；
++ 存入Row 1时，Tag info 更新为 0 | 0x123 = 0x123；
++ 存入Row 2时，Tag info 更新为 0x123 | 0x234 = 0x337；
++ 存入Row 3时，Tag info 更新为 0x337 | 0x123 = 0x337；
++ 存入Row 4时，Tag info 更新为 0x337 | 0x21a = 0x33f。
 
-引入`Tagged info`后，在Probe阶段进行Join key比较前，会先对`Tagged info`进行比对，以举例的两行数据为例：
+于是得到此时存入改bucket的 Tag info 为0x33f。
 
-+ Row 1的Tagged info为0x765，由于0x765 | 0x33f != 0x33f，则可以确定Row 1的哈希值肯定不会与Build端的任何一行哈希值相同，因此无需再进行比对；
-+ Row 2的Tagged info为0x21c，由于0x21c | 0x33f == 0x33f，无法排除Row 2的哈希值与Build端某一行哈希值相等的可能性，需要再进一步比对Join key。
+此时，在Probe阶段进行Join key比较前，可以先对`Tag info`进行比对，以举例的两行数据为例：
 
-在这个例子中，引入`Tagged info`设计后，需要进行最终会失败的Probe比较的词数由8次减少到4次。在哈希冲突越严重的实际场景下，这种优化带来的性能提升越明显。
++ Row 1的Tag info为0x765，由于0x765 | 0x33f != 0x33f，则可以确定Row 1的哈希值肯定不会与Build端的任何一行哈希值相同，因此无需再进行比对；
++ Row 2的Tag info为0x21c，由于0x21c | 0x33f == 0x33f，无法排除Row 2的哈希值与Build端某一行哈希值相等的可能性，需要再进一步比对Join key。
 
-（在具体中，由于无法确定`hash_val`的位数，取了完整的`hash_val`作为`Tagged info`而非高n位。实际应用时，n的取值应当由`hash_val`的实际位数动态决定）
+这部分的原理与Bloom Filter类似，这种做法可能与给每个bucket都生成一个Bloom Filter是等价的(需要严谨证明，不确定)。
 
-我们实现的`Tagged info`与原有的`Bloom filter`不冲突，且准确率更高。`Bloom filter`在某些场景下会有误判断的情况发生，而`Tagged info`的正确性几乎是百分之百，且由于只需进行位运算即可维护更新该字段，其运算开销也很小。
+在这个例子中，引入`Tag info`后，需要进行最终会失败的Probe比较的次数由8次减少到4次。
 
-在应用了我们实现的`Tagged info`功能后，运行测试的速度为：
+在我们的实现中，由于引入 `Tag info` 是为了取代Bloom Filter，因此n取值为哈希值的长度，即使用完整的哈希值。
 
-![Taggedinfo速度](./img/tag_1.png)
+新引入的 `Tag info` 仅进行高速的位运算，且由于每个bucket分离，误判率通常低于Bloom Filter，在Q4中测试表现如下：
 
-![Taggedinfo速度](./img/tag_2.png)
+![Taginfo速度](./img/tag_1.png)
 
-综合来看查询速度提升约5%。
+![Taginfo速度](./img/tag_2.png)
 
-### 聚合算子优化
+综合来看对于Q4查询速度提升约5%。
 
-通过测试和阅读相关文章，我们发现在TPCH的查询测试中，Aggregation算子似乎是性能提升的一大瓶颈，因此我们对其进行了部分优化，以便提升其聚合构建哈希表的性能。
+### 哈希聚合算子优化
+
+通过调研相关文章，我们发现在TPCH的查询测试中，Aggregation算子是对Q4查询性能有较为严重的影响，因此第二个优化选择了 Hash Aggregation。
+
+这部分其实同样是对于哈希冲突的优化，在Build中我们选择保留定长哈希表，采用 `Tag info` 缓解哈希冲突的影响，是考虑到build表可能较为庞大，调整哈希表大小的操作可能会带来更多的开销，超过减少哈希冲突带来的提升。在哈希聚合算子的优化中，我们选择了动态扩容哈希表，通过提升bucket数量来直接减少哈希冲突：
 
 现有代码的实现中，相关功能模块的实现如下：
 ```css
@@ -100,23 +106,21 @@
                 └─ K 个 [EntrySet] ← 每个 EntrySet 是一个具体的聚合 group
 ```
 
-其中`AggHashTable`和`AggBucket`分别是哈希表和桶的抽象。其中，哈希桶的数量是在初始化时固定的。由于其对哈希桶扫描查找entry的函数是顺序扫描遍历，当一个哈希桶中的entry较多时，其扫描性能会有明显下降，甚至可能退化成线性搜索。
+其中`AggHashTable`和`AggBucket`分别是哈希表和桶的抽象。其中，哈希桶的数量是固定的，在entry数量增多时，不可避免的会导致单个bucket中的entry增多，而单个bucket中entry过多直接带来的影响就是哈希的性能变差(哈希冲突严重)。
 
-因此，我们添加了相应的变量，用来监控哈希桶的使用情况，称为平均桶负载(Avg bucket load)，其计算方式是`AggHashTable`中总共存储的`EntrySet`计数除以被使用的哈希桶数量。当平均桶负载超过设定的阈值时，将对哈希表进行动态扩容(`ResizeBuckets`)。
+动态扩容实际上就是在达到一定条件时(例如bucket平均条目数量超过了一个阈值)，将bucket数量进行翻倍(哈希值多取一位)，将当前条目重新散列到扩容后的哈希表中，由于哈希值增加了一位，预期上可以让平均每个bucket中的条目减少一般，对哈希表的查询性能会带来巨大的提升，但是由于哈希表扩容也会有一定的开销，因此频繁扩容可能会导致性能下降，我们使用每个使用中的bucket的平均条目数作为扩容的条件，设置了一个config变量 `AVG_BUCKET_LOAD_THRESHOLD` 用于控制当平均条目达到多少时进行扩容。最终实验时我们将改值设置为16。
 
-动态扩容的具体实现是：将该`AggHashTable`中的哈希桶数量翻倍，将其中的EntrySet重新哈希分配进入新的桶中。这一过程中重新哈希的运算带来的性能消耗是潜在的，综合来说能否带来性能提升仍然有待商榷。
+Resize实现方式即重新构建哈希表，将原有的entry散列到新的扩容后的bucket中，最终效果为：
 
 ![ResizeBuckets速度](./img/agg_1.png)
 
 ![ResizeBuckets速度](./img/agg_2.png)
 
-好在运行TPCH测试的结果很乐观，可以看到这样的优化带来的性能提升是相当可观的。这里是同时应用`Tagged info`和聚合算子优化的速度，相比仅使用`Tagged info`的查询速度提升了约12%。
+这里是同时应用了上述 `Tag info` ，相比仅使用`Tag info`的查询速度提升了约12%。(不稳定，可以达到95000ms左右)
 
 #### **优化尝试**
 
-我们尝试过将`Bloom Filter`以及前面实现的`Tagged info`同样引入`Aggregation`算子中，使其在聚合构建哈希表和查找Entry时能进一步提升性能，不过在实际应用了这两个辅助功能后，整体性能不升反降。经研究分析，可能是扩容哈希表的操作使得每个桶中的数据量足够少，哈希值分布较为稀疏，利用`Tagged info`带来的提升并不大，反而是在写入字段和维护时带来的运算开销的影响占了上风。最终我们弃用了这个尝试。
-
-（**可能的进一步优化**：`Aggregation`算子的结构中，`RadixPartitionTable`的结构使各个分区的哈希表和哈希桶天然地并行和免锁，可以将下层的一些操作放到这一层级，例如`UpdateState`函数，提高各分区间的并行性）
+理论上，对于聚合哈希算子，哈希表在改为动态扩容后也可以继续引入 `Tag info` 来进一步减缓哈希冲突带来的影响，但是在简单尝试过后发现，引入 `Tag info`  后，性能反而出现了些许下降，原因大概是扩容后本身每个bucket中的条目数都不太多，进行 `Tag info`  相关计算的时间相对于遍历他们进行比较的时间不算非常小，不可忽略，所以最后性能反而因为计算 `Tag info`  而下降，因此最终仅采用了哈希表动态扩容。
 
 ### 其他优化
 
@@ -127,22 +131,25 @@
 + 原先实现为std::vector<int8_t>，每行对应一个元素，存储开销为8bit。每个元素1表示匹配，0表示未匹配；
 + 优化后的实现为std::vector<uint64_t>，每bit对应一个元素，存储开销为原来的1/8。每位用1表示匹配，0表示未匹配，相应地使用位运算对其进行更改和查找。
 
-这一项优化是针对`bit_map`的空间存储开销的，对查找没有影响，故没有单独测试其性能。
+这一项优化是针对`bit_map`的空间存储开销的，对于查询速度没有明显影响。
 
 **神秘的性能提升**
 
-我在Hash Join算子里的ProbeState类添加了一个变量`matched_entries`，用来记录探测到的entry的信息，本意是避免其在`GatherData()`函数中反复调用`AppendRowToValueVec()`函数。后来注意到`AppendRowToValueVec()`函数是`inline`的，那么理论上应该不会对性能产生影响。
+在Hash Join算子里的ProbeState类添加了一个变量`matched_entries`，用来记录探测到的entry的信息，本意是避免其在`GatherData()`函数中反复调用`AppendRowToValueVec()`函数，而是在最终 `GetJoinResult` 的时候一起添加。后来注意到`AppendRowToValueVec()`函数是 `inline` 的，那么理论上应该不会对性能产生影响。
 
 结果在实际运行的时候，发现使用原本的代码（即调用`AppendRowToValueVec()`函数）查询速度不如我修改后的代码的查询速度，令人疑惑。
 
-推测是`inline`并非强制性的，编译器可能不采用这个关键字导致其函数调用并没有`inline`，所以实际上还是成功优化了。值得商榷。
+关于这里的提升有两个可能的推测：
 
-采用了这里实现的“优化”后的结果：
+- 编译器在编译的时候并没有采用inline的建议，导致这部分进行了循环内的函数调用，将其推至 `GetJoinResult` 起到了向量化的效果，这个需要查看编译器最终生成的汇编来验证
+- 推至 `GetJoinResult` 再进行 `AppendRowToValueVec()` 相同的操作，由于已经有了所有probe到的数据，直接循环遍历进行操作时会有更好的局部性。而原本的做法中，每次probe命中就进行该操作，如果probe长时间未命中后突然命中，可能会导致局部性变差，没有有效利用到cache，这种说法也比较符合多次实验中的现象：原本的做法Q4执行时间在 95000和130000左右波动，多数情况为130000(上一张截图)，而更改后Q4执行时间大多数稳定在95000左右(最终结果)
+
+### 结果：
+
+最终所有改动全部应用后的Q4查询运行结果：
 
 ![Vectorize](./img/vec_1.png)
 
 ![Vectorize](./img/vec_2.png)
 
-速度提升约45%。
-
-需要指出的是这里的速度提升并不是单单这一步带来的，而是上述所有优化**正常运行**的综合结果。综合来看相比最原始的查询速度提升71%。
+综合来看相比最原始的查询速度提升71%。
