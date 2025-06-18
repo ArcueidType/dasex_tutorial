@@ -28,7 +28,9 @@ struct EntrySingle {
 struct TupleBucket {
     int tuple_nums = 0;
     std::vector<std::shared_ptr<EntrySingle>> entry_set;
+    size_t tagged_info = 0;
     void InsertEntry(std::shared_ptr<EntrySingle> &entrySingle) {
+        tagged_info |= entrySingle->hash_val;
         entry_set.emplace_back(entrySingle);
         tuple_nums++;
     }

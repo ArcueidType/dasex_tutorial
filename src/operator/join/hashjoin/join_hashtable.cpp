@@ -217,7 +217,7 @@ JoinHashTable::JoinHashTable(std::vector<int> build_ids,
     SHIFT = Shift(radix_bits);
     MASK = Mask(radix_bits);
     buckets.resize(NUM_PARTITIONS);
-    bloom_filter = std::make_unique<BloomFilter>();
+    // bloom_filter = std::make_unique<BloomFilter>();
     // 初始化 buckets，包含NUM_PARTITIONS个TupleBucket对象，后续优化，可以使用惰性初始化
     for (auto &bucket : buckets) {
         bucket = std::make_shared<TupleBucket>();
@@ -258,9 +258,9 @@ void JoinHashTable::Build(std::shared_ptr<arrow::RecordBatch> &chunk) {
     }
     // 计算Hash值
     std::vector<size_t> hashes = Hashs(join_keys, num_rows);
-    for(int i = 0; i < hashes.size(); i++) {
-        bloom_filter->Add(hashes[i]);
-    }
+    // for(int i = 0; i < hashes.size(); i++) {
+    //     bloom_filter->Add(hashes[i]);
+    // }
     // 计算每行数据应该属于那个桶
     std::vector<int> bucket_idx = ComputeBucketIndices(hashes, num_rows);
     ScatterData(bucket_idx, num_rows, hashes);
@@ -410,11 +410,16 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherData(std::vector<std::shared_pt
     probe_state->bit_map.resize(count);
     probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
-        if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        // if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        //     probe_state->bit_map[i] = 0;
+        //     continue;
+        // }
+        auto &bucket = buckets[bucket_idx[i]];
+        size_t probe_tagged = hashes[i];
+        if ((probe_tagged | bucket->tagged_info) != bucket->tagged_info) {
             probe_state->bit_map[i] = 0;
             continue;
         }
-        auto &bucket = buckets[bucket_idx[i]];
         int tuple_nums = bucket->tuple_nums;
         bool is_match = false;
         size_t hash_p = hashes[i];
@@ -495,11 +500,16 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherSemiData(std::vector<std::share
     probe_state->bit_map.resize(count);
     probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
-        if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        // if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        //     probe_state->bit_map[i] = 0;
+        //     continue;
+        // }
+        auto &bucket = buckets[bucket_idx[i]];
+        size_t probe_tagged = hashes[i];
+        if ((probe_tagged | bucket->tagged_info) != bucket->tagged_info) {
             probe_state->bit_map[i] = 0;
             continue;
         }
-        auto &bucket = buckets[bucket_idx[i]];
         int tuple_nums = bucket->tuple_nums;
         bool is_match = false;
         size_t hash_p = hashes[i];
@@ -878,11 +888,16 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherAntiData(std::vector<std::share
     probe_state->bit_map.resize(count);
     probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
-        if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        // if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        //     probe_state->bit_map[i] = 0;
+        //     continue;
+        // }
+        auto &bucket = buckets[bucket_idx[i]];
+        size_t probe_tagged = hashes[i];
+        if ((probe_tagged | bucket->tagged_info) != bucket->tagged_info) {
             probe_state->bit_map[i] = 0;
             continue;
         }
-        auto &bucket = buckets[bucket_idx[i]];
         int tuple_nums = bucket->tuple_nums;
         std::vector<VALUE> res;
         bool is_match = false;
