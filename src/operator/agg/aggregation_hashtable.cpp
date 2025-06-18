@@ -170,6 +170,7 @@ void AggBucket::InsertEntrySet(std::shared_ptr<EntrySet> &entrySet) {
         num_rows++;
         bucket_size++;
     }
+    // tag_info |= entrySet->key->hash_val;
 }
 
 void AggBucket::UpdateState(int idx, std::vector<std::shared_ptr<Value>> &values,
@@ -180,6 +181,9 @@ void AggBucket::UpdateState(int idx, std::vector<std::shared_ptr<Value>> &values
 int AggBucket::FindEntry(std::shared_ptr<EntryKey> &entryKey) {
     auto &entry = *entryKey;
     int res = -1;
+    // if (entry.hash_val | tag_info != tag_info) {
+    //     return res;
+    // }
     for(int i = 0; i < num_rows; i++) {
         if(bucket[i] == nullptr) {
             continue;

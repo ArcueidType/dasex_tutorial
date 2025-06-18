@@ -52,6 +52,7 @@ public:
     std::vector<std::shared_ptr<EntrySet>> bucket;
     int num_rows = 0;
     int bucket_size;
+    // size_t tag_info = 0;
     AggBucket(int bucket_size = 16) : bucket_size(bucket_size){
         bucket.resize(bucket_size);
     }

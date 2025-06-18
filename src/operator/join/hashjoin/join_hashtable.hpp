@@ -73,7 +73,7 @@ public:
     JoinTypes join_type;
     std::vector<int> build_ids;
     std::vector<int> probe_ids;
-    std::unique_ptr<BloomFilter> bloom_filter;
+    // std::unique_ptr<BloomFilter> bloom_filter;
     // TODO: 多比较条件暂时只用于SEMI、ANTI-join，应该扩展到所有类型JOIN，后续优化
     std::vector<ExpressionTypes> comparison_types;
     std::vector<std::shared_ptr<TupleBucket>> buckets;
