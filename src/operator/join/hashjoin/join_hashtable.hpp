@@ -24,8 +24,8 @@ struct EntrySingle {
     size_t hash_val;
     // 畅：添加tagged_info字段，就近放在hash_val后面
     size_t tagged_info;
-    EntrySingle(KEY key, VALUE val, size_t hash_val, size_t tagged_info)
-        : key(std::move(key)), val(std::move(val)), hash_val(hash_val), tagged_info(tagged_info) {}
+    EntrySingle(KEY key, VALUE val, size_t hash_val)
+        : key(std::move(key)), val(std::move(val)), hash_val(hash_val) {}
 };
 
 // 行数据分区，也可以理解为HashTable的桶，用来存储数据
@@ -34,7 +34,7 @@ struct TupleBucket {
     std::vector<std::shared_ptr<EntrySingle>> entry_set;
     size_t tagged_info_or = 0;
     void InsertEntry(std::shared_ptr<EntrySingle> &entrySingle) {
-        tagged_info_or |= entrySingle->tagged_info;
+        tagged_info_or |= entrySingle->hash_val;
         entry_set.emplace_back(entrySingle);
         tuple_nums++;
     }
@@ -103,7 +103,7 @@ public:
     // 对输入Hash数组求每条数据对应的桶编号
     std::vector<int> ComputeBucketIndices(std::vector<size_t> &join_key_hash, int count);
     // 根据桶编号将数据散列到各个桶
-    void ScatterData(std::vector<int> &bucket_idx, int count, std::vector<size_t> &hashs, std::vector<size_t> &tagged_infos);
+    void ScatterData(std::vector<int> &bucket_idx, int count, std::vector<size_t> &hashs);
     // 根据桶编号匹配所有数据
     std::shared_ptr<ProbeState> GatherData(std::vector<std::shared_ptr<arrow::Array>> &join_keys, std::vector<int> &bucket_idx, int count, std::vector<size_t> &hashes);
     // 用于SEMI join
