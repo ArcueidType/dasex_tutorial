@@ -21,7 +21,7 @@ int get_socket(int core);
 const int AGG_TABLE_BUCKET_NUMS = 131072;
 
 // 平均每个桶负载阈值
-const int AVG_BUCKET_LOAD = 16;
+const int AVG_BUCKET_LOAD_THRESHOLD = 16;
 
 // 配置HashJoin桶初始化大小
 const uint64_t RADIX_BITS = 18;

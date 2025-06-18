@@ -222,7 +222,7 @@ void AggHashTable::UpdateState(std::vector<std::shared_ptr<Value>> key, size_t h
             total_group_num++;
         }
     }
-    if (total_group_num / used_bucket_num > AVG_BUCKET_LOAD) {
+    if (total_group_num / used_bucket_num > AVG_BUCKET_LOAD_THRESHOLD) {
         ResizeBuckets();
     }
 }
