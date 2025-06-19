@@ -92,6 +92,8 @@ $$
 
 综合来看对于Q4查询速度提升约5%。
 
+代码位于 `src/operator/join/hashjoin/join_hashtable.*, EntrySingle，TupleBucket增加了成员，TupleBucket::InsertEntry()增加了taginfo计算，Gather*Data中增加了taginfo过滤`
+
 ### 哈希聚合算子优化
 
 通过调研相关文章，我们发现在TPCH的查询测试中，Aggregation算子是对Q4查询性能有较为严重的影响，因此第二个优化选择了 Hash Aggregation。
@@ -118,6 +120,35 @@ Resize实现方式即重新构建哈希表，将原有的entry散列到新的扩
 
 这里是同时应用了上述 `Tag info` ，相比仅使用`Tag info`的查询速度提升了约12%。(不稳定，可以达到95000ms左右)
 
+代码位于 `src/operator/agg/aggregation_hashtable.*`，扩容方法为：
+```cpp
+void AggHashTable::ResizeBuckets() {
+    int new_bucket_num = bucket_num * 2;
+    std::vector<std::shared_ptr<AggBucket>> new_buckets(new_bucket_num);
+    std::vector<int8_t> new_bucket_map(new_bucket_num);
+    used_bucket_num = 0;
+
+    for (int i = 0; i < bucket_num; ++i) {
+        if (bucket_map[i] == 0 || buckets[i] == nullptr) continue;
+        for (auto &entry : buckets[i]->bucket) {
+            if (!entry) continue;
+            size_t new_hash = entry->key->hash_val;
+            int new_idx = new_hash & (new_bucket_num - 1);
+            if (new_buckets[new_idx] == nullptr) {
+                new_buckets[new_idx] = std::make_shared<AggBucket>();
+                new_bucket_map[new_idx] = 1;
+                used_bucket_num++;
+            }
+            new_buckets[new_idx]->InsertEntrySet(entry);
+        }
+    }
+
+    buckets = std::move(new_buckets);
+    bucket_map = std::move(new_bucket_map);
+    bucket_num = new_bucket_num;
+}
+```
+
 #### **优化尝试**
 
 理论上，对于聚合哈希算子，哈希表在改为动态扩容后也可以继续引入 `Tag info` 来进一步减缓哈希冲突带来的影响，但是在简单尝试过后发现，引入 `Tag info`  后，性能反而出现了些许下降，原因大概是扩容后本身每个bucket中的条目数都不太多，进行 `Tag info`  相关计算的时间相对于遍历他们进行比较的时间不算非常小，不可忽略，所以最后性能反而因为计算 `Tag info`  而下降，因此最终仅采用了哈希表动态扩容。
@@ -127,6 +158,8 @@ Resize实现方式即重新构建哈希表，将原有的entry散列到新的扩
 **Bit_map优化**
 
 对Hash Join算子中原有的`bit_map`进行了优化：
+
+位于 `src/operator/join/hashjoin/join_hashtable.hpp, ProbeState类中`
 
 + 原先实现为std::vector<int8_t>，每行对应一个元素，存储开销为8bit。每个元素1表示匹配，0表示未匹配；
 + 优化后的实现为std::vector<uint64_t>，每bit对应一个元素，存储开销为原来的1/8。每位用1表示匹配，0表示未匹配，相应地使用位运算对其进行更改和查找。
@@ -145,6 +178,8 @@ Resize实现方式即重新构建哈希表，将原有的entry散列到新的扩
 - 推至 `GetJoinResult` 再进行 `AppendRowToValueVec()` 相同的操作，由于已经有了所有probe到的数据，直接循环遍历进行操作时会有更好的局部性。而原本的做法中，每次probe命中就进行该操作，如果probe长时间未命中后突然命中，可能会导致局部性变差，没有有效利用到cache，这种说法也比较符合多次实验中的现象：原本的做法Q4执行时间在 95000和130000左右波动，多数情况为130000(上一张截图)，而更改后Q4执行时间基本稳定在95000左右(最终结果)
 
 因为第二个原因的可能性更大，这里归类为对局部性的优化
+
+代码位于 `src/operator/join/hashjoin/join_hashtable.cpp, GatherData(), GetJoinResult()`
 
 ### 结果：
 
