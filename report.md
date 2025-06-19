@@ -10,12 +10,6 @@
 
 为了提高TPCH测试中各种查询的性能，我们首先尝试对Hash Join算子进行优化。
 
-未进行优化改动时，原本运行TPCH-Q4的速度：
-
-![原始速度](./img/origin_1.png)
-
-![原始速度](./img/origin_2.png)
-
 ### 哈希冲突造成的性能影响
 
 在Hash Join算子执行的过程中，哈希冲突对性能的影响是显著的，最直接的影响就是 **探测成本增加了**，在Probe阶段，每个键通过hash值定位到桶(bucket)，再线性查找比较桶内的所有entry。如果哈希冲突严重，每个桶内entry数量很多，会导致哈希连接的效果差。最极端的情况下，所有键都落在同一个bucket内，此时理论复杂度和NestedLoopJoin相同，但由于额外的哈希计算反而会导致性能降低。
@@ -183,10 +177,16 @@ void AggHashTable::ResizeBuckets() {
 
 ### 结果：
 
+未进行优化改动时，原本运行TPCH-Q4的速度：
+
+![原始速度](./img/origin_1.png)
+
+![原始速度](./img/origin_2.png)
+
 最终所有改动全部应用后的Q4查询运行结果：
 
 ![Vectorize](./img/vec_1.png)
 
 ![Vectorize](./img/vec_2.png)
 
-综合来看相比最原始的查询速度提升71%。
+综合来看相比最原始的查询速度提升41%。
