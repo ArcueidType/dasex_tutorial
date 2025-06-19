@@ -22,21 +22,21 @@
 
 为了方便，这里假设每个entry的`Hash value`为32位，低12位作为哈希键。假设Build端有这四行数据：
 
-| 行 | Hash value |
-|:---:|:---:|
-|Row 1|0x123ab123|
-|Row 2|0x234cd123|
-|Row 3|0x123ab123|
-|Row 4|0x21abc123|
+|  行   | Hash value |
+| :---: | :--------: |
+| Row 1 | 0x123ab123 |
+| Row 2 | 0x234cd123 |
+| Row 3 | 0x123ab123 |
+| Row 4 | 0x21abc123 |
 
 其中Row 1和Row 3的哈希值相同，而与Row 2和Row 4的不相同。由于低12位作为哈希键，因此这四行数据的哈希键都是**0x123**，存放在了哈希表中的同一个`bucket`中。
 
 假设Probe时右表有两行数据：
 
-| 行 | Hash value |
-|:---:|:---:|
-|Row 1|0x765da123|
-|Row 2|0x21c8b123|
+|  行   | Hash value |
+| :---: | :--------: |
+| Row 1 | 0x765da123 |
+| Row 2 | 0x21c8b123 |
 
 这两行数据的哈希键也是**0x123**，因此在Probe阶段这两行数据都要与Build端的4行数据进行比较。然而，由于它们的实际哈希值与上面4行数据均不匹配，这8次比较都以失败告终。这样的情况发生过多无疑会导致性能问题。
 
@@ -52,12 +52,12 @@ TagInfo = TagInfo | (hash >> (64-n))
 $$
 继续使用上面的例子，我们假设这里取 n = 12。那么上述Build端的数据的`Tag info`即为：
 
-| 行 | Hash value | Tag info |
-|:---:|:---:|:---:|
-|Row 1|0x123ab123|0x123|
-|Row 2|0x234cd123|0x234|
-|Row 3|0x123ab123|0x123|
-|Row 4|0x21abc123|0x21a|
+|  行   | Hash value | Tag info |
+| :---: | :--------: | :------: |
+| Row 1 | 0x123ab123 |  0x123   |
+| Row 2 | 0x234cd123 |  0x234   |
+| Row 3 | 0x123ab123 |  0x123   |
+| Row 4 | 0x21abc123 |  0x21a   |
 
 + 初始化bucket时，Tag info = 0；
 + 存入Row 1时，Tag info 更新为 0 | 0x123 = 0x123；
@@ -95,6 +95,7 @@ $$
 这部分其实同样是对于哈希冲突的优化，在Build中我们选择保留定长哈希表，采用 `Tag info` 缓解哈希冲突的影响，是考虑到build表可能较为庞大，调整哈希表大小的操作可能会带来更多的开销，超过减少哈希冲突带来的提升。在哈希聚合算子的优化中，我们选择了动态扩容哈希表，通过提升bucket数量来直接减少哈希冲突：
 
 现有代码的实现中，相关功能模块的实现如下：
+
 ```css
 [RadixPartitionTable]
     └─ N 个 [AggHashTable]  ← 按照低位哈希将输入划分到 N 个子表
@@ -115,7 +116,8 @@ Resize实现方式即重新构建哈希表，将原有的entry散列到新的扩
 这里是同时应用了上述 `Tag info` ，相比仅使用`Tag info`的查询速度提升了约12%。(不稳定，可以达到95000ms左右)
 
 代码位于 `src/operator/agg/aggregation_hashtable.*`，扩容方法为：
-```cpp
+
+```c++
 void AggHashTable::ResizeBuckets() {
     int new_bucket_num = bucket_num * 2;
     std::vector<std::shared_ptr<AggBucket>> new_buckets(new_bucket_num);
