@@ -438,9 +438,7 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherData(std::vector<std::shared_pt
         auto &bucket = buckets[bucket_idx[i]];
         // 畅：添加相关计算tagged_info操作
         size_t probe_tagged = ExtractTaggedInfo(hashes[i]);
-        if ((probe_tagged | bucket->tagged_info_or) != probe_tagged) {
-            // probe_state->bit_map[i] = 0;
-            // spdlog::info("触发了tagged_info");
+        if ((probe_tagged | bucket->tagged_info_or) != bucket->tagged_info_or) {
             continue;
         }
         // 下面没改
@@ -530,11 +528,15 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherSemiData(std::vector<std::share
     probe_state->InitBitmap(count);
     probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
-        if(!bloom_filter->IsInBloomFilter(hashes[i])) {
-            // probe_state->bit_map[i] = 0;
+        // if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        //     // probe_state->bit_map[i] = 0;
+        //     continue;
+        // }
+        auto &bucket = buckets[bucket_idx[i]];
+        size_t probe_tagged = ExtractTaggedInfo(hashes[i]);
+        if ((probe_tagged | bucket->tagged_info_or) != bucket->tagged_info_or) {
             continue;
         }
-        auto &bucket = buckets[bucket_idx[i]];
         int tuple_nums = bucket->tuple_nums;
         bool is_match = false;
         size_t hash_p = hashes[i];
@@ -917,11 +919,15 @@ std::shared_ptr<ProbeState> JoinHashTable::GatherAntiData(std::vector<std::share
     probe_state->InitBitmap(count);
     probe_state->left_result.resize(schema->num_fields());
     for(int i = 0; i < count; i++) {
-        if(!bloom_filter->IsInBloomFilter(hashes[i])) {
-            // probe_state->bit_map[i] = 0;
+        // if(!bloom_filter->IsInBloomFilter(hashes[i])) {
+        //     // probe_state->bit_map[i] = 0;
+        //     continue;
+        // }
+        auto &bucket = buckets[bucket_idx[i]];
+        size_t probe_tagged = ExtractTaggedInfo(hashes[i]);
+        if ((probe_tagged | bucket->tagged_info_or) != bucket->tagged_info_or) {
             continue;
         }
-        auto &bucket = buckets[bucket_idx[i]];
         int tuple_nums = bucket->tuple_nums;
         std::vector<VALUE> res;
         bool is_match = false;
